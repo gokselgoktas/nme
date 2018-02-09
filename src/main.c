@@ -18,6 +18,10 @@
 
 #define NME_PATH_SEPARATOR NME_FORWARD_SLASH
 
+#define NME_FILE 0
+#define NME_DIRECTORY 1
+#define NME_END_OF_DIRECTORY -1
+
 #define NME_STRINGIFY(MACRO) #MACRO
 #define NME_EXPAND_AND_STRINGIFY(MACRO) NME_STRINGIFY(MACRO)
 
@@ -54,6 +58,10 @@ struct queue {
 
 static char const *NME_EXECUTABLE_NAME = NULL;
 static char const *NME_INPUT_FILENAME = NULL;
+
+static int NME_SHOULD_PRINT_ENTRY_METADATA = NME_FALSE;
+static int NME_SHOULD_PRINT_EXTENDED_ENTRY_METADATA = NME_FALSE;
+static int NME_ENTRY_METADATA_PRINT_FILTER = -1;
 
 static void report(char const *message, ...)
 {
@@ -201,6 +209,49 @@ static int is_queue_empty(queue_t const *queue)
     return (queue->size == 0);
 }
 
+static entry_t *read_entry_metadata(FILE *file, entry_t *entry)
+{
+    if (file == NULL || ferror(file) != NME_FALSE) {
+        die("invalid or corrupt file");
+    } else if (feof(file) == NME_TRUE) {
+        die("premature end of file");
+    }
+
+    read(file, entry, sizeof (entry_t));
+    entry->name[31] = '\0';
+
+    return entry;
+}
+
+static void print_entry_metadata(entry_t const *entry)
+{
+    NME_ASSERT(entry != NULL);
+
+    if (NME_ENTRY_METADATA_PRINT_FILTER > -1) {
+        if (entry->type != NME_ENTRY_METADATA_PRINT_FILTER) {
+            return;
+        }
+    }
+
+    if (NME_SHOULD_PRINT_EXTENDED_ENTRY_METADATA == NME_FALSE) {
+
+        printf("%s ", entry->name);
+        return;
+    }
+
+    char type_identifier = 'f';
+
+    if (entry->type == NME_DIRECTORY) {
+        type_identifier = 'd';
+    } else if (entry->type == NME_END_OF_DIRECTORY) {
+        printf("[!] %s\n", entry->name);
+        return;
+    }
+
+    printf("[%c] %s #%u $%u\n", type_identifier, entry->name, entry->size,
+        entry->offset);
+}
+
 static void fix_path_separators(char *input)
 {
     for (; input != NULL; input = strchr(input, NME_BACKSLASH)) {
@@ -241,6 +292,7 @@ static void display_help_screen(void)
         "Options:\n"
         "        -h                  display this help screen\n"
         "        -v                  display version information\n"
+        "        -z [options=`fd+*`] print entry metadata\n"
         "\n",
         NME_EXECUTABLE_NAME);
 }
@@ -261,6 +313,36 @@ static void handle_command_line_option(char option, char const *argument)
 
     case 'v':
         display_version_information();
+        break;
+
+    case 'z':
+        NME_SHOULD_PRINT_ENTRY_METADATA = NME_TRUE;
+
+        if (argument != NULL) {
+            char const *option = argument;
+
+            for (; option != argument + 2; ++option) {
+                switch (*option) {
+                case 'f':
+                    NME_ENTRY_METADATA_PRINT_FILTER = NME_FILE;
+                    break;
+
+                case 'd':
+                    NME_ENTRY_METADATA_PRINT_FILTER = NME_DIRECTORY;
+                    break;
+
+                case '+':
+                    NME_SHOULD_PRINT_EXTENDED_ENTRY_METADATA = NME_TRUE;
+                    break;
+
+                case '*':
+                    NME_ENTRY_METADATA_PRINT_FILTER = -1;
+
+                default:
+                    break;
+                }
+            }
+        }
         break;
 
     default:
