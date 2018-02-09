@@ -93,6 +93,49 @@ void handle_signal(int signal_identifier)
     exit(EXIT_FAILURE);
 }
 
+static void *allocate(size_t size)
+{
+    void *result = malloc(size);
+
+    if (result == NULL) {
+        die("malloc(%lu) failed", size);
+    }
+
+    return result;
+}
+
+static void *read(FILE *file, void *buffer, size_t size)
+{
+    if (file == NULL || ferror(file) != NME_FALSE) {
+        die("invalid or corrupt file");
+    } else if (buffer == NULL) {
+        die("invalid or corrupt buffer");
+    }
+
+    size_t count = fread(buffer, size, 1, file);
+
+    if (count != 1) {
+        report("read(%lu) failed", size);
+    }
+
+    return buffer;
+}
+
+static void write(FILE *file, void const *buffer, size_t size)
+{
+    if (file == NULL || ferror(file) != 0) {
+        die("invalid or corrupt file");
+    } else if (buffer == NULL) {
+        die("invalid or corrupt buffer");
+    }
+
+    size_t count = fwrite(buffer, size, 1, file);
+
+    if (count != 1) {
+        report("write(0x%08x, %lu) failed", buffer, size);
+    }
+}
+
 static void fix_path_separators(char *input)
 {
     for (; input != NULL; input = strchr(input, NME_BACKSLASH)) {
