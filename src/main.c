@@ -294,10 +294,11 @@ static void extract_file_entry(FILE *file, entry_t const *entry)
     if (NME_OUTPUT_DIRECTORY != NULL) {
         size_t length = strlen(NME_OUTPUT_DIRECTORY);
 
-        strncpy(path, NME_OUTPUT_DIRECTORY, length);
+        strncpy(path, NME_OUTPUT_DIRECTORY, length + 1);
 
         if (path[length - 1] != NME_PATH_SEPARATOR) {
-            path[length] = NME_PATH_SEPARATOR;
+            char path_separator = NME_PATH_SEPARATOR;
+            strncat(path, &path_separator, 1);
         }
 
         strcat(path, entry->name);
