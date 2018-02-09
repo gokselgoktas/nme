@@ -29,6 +29,18 @@
         } \
     } while (NME_FALSE)
 
+typedef struct entry entry_t;
+
+struct entry {
+    char name[32];
+    int8_t type;
+
+    uint8_t unused[3];
+
+    uint32_t size;
+    uint32_t offset;
+};
+
 static char const *NME_EXECUTABLE_NAME = NULL;
 
 static void report(char const *message, ...)
