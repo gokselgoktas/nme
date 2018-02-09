@@ -59,6 +59,8 @@ struct queue {
 static char const *NME_EXECUTABLE_NAME = NULL;
 static char const *NME_INPUT_FILENAME = NULL;
 
+static size_t NME_QUEUE_CAPACITY = 4096;
+
 static int NME_SHOULD_PRINT_ENTRY_METADATA = NME_FALSE;
 static int NME_SHOULD_PRINT_EXTENDED_ENTRY_METADATA = NME_FALSE;
 static int NME_ENTRY_METADATA_PRINT_FILTER = -1;
@@ -250,6 +252,60 @@ static void print_entry_metadata(entry_t const *entry)
 
     printf("[%c] %s #%u $%u\n", type_identifier, entry->name, entry->size,
         entry->offset);
+}
+
+static void enqueue_child_entries(FILE *file, queue_t *queue)
+{
+    NME_ASSERT(file != NULL);
+    NME_ASSERT(queue != NULL);
+
+    entry_t entry;
+    read_entry_metadata(file, &entry);
+
+    while (entry.type != NME_END_OF_DIRECTORY) {
+        if (ferror(file) != NME_FALSE) {
+            die("invalid or corrupt file");
+        } else if (feof(file) == NME_TRUE) {
+            die("premature end of file");
+        }
+
+        enqueue(queue, &entry);
+        read_entry_metadata(file, &entry);
+    }
+}
+
+static void traverse_archive(FILE *file)
+{
+    NME_ASSERT(file != NULL);
+
+    queue_t *queue = create_queue(NME_QUEUE_CAPACITY);
+    enqueue_child_entries(file, queue);
+
+    while (is_queue_empty(queue) == NME_FALSE) {
+        entry_t const *entry = dequeue(queue);
+        NME_ASSERT(entry != NULL);
+
+        fseek(file, entry->offset, SEEK_SET);
+
+        switch (entry->type) {
+        case NME_FILE:
+            break;
+
+        case NME_DIRECTORY:
+            enqueue_child_entries(file, queue);
+            break;
+
+        default:
+            die("corrupt entry");
+            break;
+        }
+
+        if (NME_SHOULD_PRINT_ENTRY_METADATA == NME_TRUE) {
+            print_entry_metadata(entry);
+        }
+    }
+
+    free_queue(queue);
 }
 
 static void fix_path_separators(char *input)
