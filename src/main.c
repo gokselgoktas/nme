@@ -30,6 +30,7 @@
     } while (NME_FALSE)
 
 typedef struct entry entry_t;
+typedef struct queue queue_t;
 
 struct entry {
     char name[32];
@@ -39,6 +40,16 @@ struct entry {
 
     uint32_t size;
     uint32_t offset;
+};
+
+struct queue {
+    size_t head;
+    size_t tail;
+
+    size_t size;
+    size_t capacity;
+
+    entry_t *data;
 };
 
 static char const *NME_EXECUTABLE_NAME = NULL;
@@ -134,6 +145,60 @@ static void write(FILE *file, void const *buffer, size_t size)
     if (count != 1) {
         report("write(0x%08x, %lu) failed", buffer, size);
     }
+}
+
+static queue_t *create_queue(size_t capacity)
+{
+    NME_ASSERT(capacity >= 1);
+
+    queue_t *queue = allocate(sizeof (queue_t));
+    memset(queue, 0x00, sizeof (queue_t));
+
+    queue->data = allocate(sizeof (entry_t) * capacity);
+
+    queue->capacity = capacity;
+    queue->tail = queue->capacity - 1;
+
+    return queue;
+}
+
+static void free_queue(queue_t *queue)
+{
+    if (queue != NULL) {
+        free(queue->data);
+    }
+
+    memset(queue, 0x00, sizeof (queue_t));
+    free(queue);
+}
+
+static void enqueue(queue_t *queue, entry_t const *entry)
+{
+    NME_ASSERT(queue != NULL || queue->data != NULL);
+    NME_ASSERT(queue->size + 1 < queue->capacity);
+
+    queue->tail = (queue->tail + 1) % queue->capacity;
+    memmove(queue->data + queue->tail, entry, sizeof (entry_t));
+
+    ++queue->size;
+}
+
+static entry_t const *dequeue(queue_t *queue)
+{
+    NME_ASSERT(queue != NULL || queue->data != NULL);
+
+    entry_t const *entry = queue->data + queue->head;
+    queue->head = (queue->head + 1) % queue->capacity;
+
+    --queue->size;
+
+    return entry;
+}
+
+static int is_queue_empty(queue_t const *queue)
+{
+    NME_ASSERT(queue != NULL);
+    return (queue->size == 0);
 }
 
 static void fix_path_separators(char *input)
