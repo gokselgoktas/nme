@@ -18,7 +18,59 @@
 
 #define NME_PATH_SEPARATOR NME_FORWARD_SLASH
 
+#define NME_STRINGIFY(MACRO) #MACRO
+#define NME_EXPAND_AND_STRINGIFY(MACRO) NME_STRINGIFY(MACRO)
+
+#define NME_ASSERT(CONDITION) \
+    do { \
+        if ((CONDITION) == NME_FALSE) { \
+            die("assertion failed in " __FILE__ " at line " \
+                NME_EXPAND_AND_STRINGIFY(__LINE__) " for `" #CONDITION "`"); \
+        } \
+    } while (NME_FALSE)
+
 static char const *NME_EXECUTABLE_NAME = NULL;
+
+static void report(char const *message, ...)
+{
+    if (message == NULL) {
+        fprintf(stderr, "%s: unknown error\n", NME_EXECUTABLE_NAME);
+        return;
+    }
+
+    va_list arguments;
+    va_start(arguments, message);
+
+    char *buffer = malloc(1024);
+
+    vsnprintf(buffer, 1024, message, arguments);
+    fprintf(stderr, "%s: %s\n", NME_EXECUTABLE_NAME, buffer);
+
+    free(buffer);
+    va_end(arguments);
+}
+
+static void fail(char const *message, ...)
+{
+    va_list arguments;
+    va_start(arguments, message);
+
+    report(message, arguments);
+
+    va_end(arguments);
+    exit(EXIT_FAILURE);
+}
+
+static void die(char const *message, ...)
+{
+    va_list arguments;
+    va_start(arguments, message);
+
+    report(message, arguments);
+
+    va_end(arguments);
+    abort();
+}
 
 static void fix_path_separators(char *input)
 {
