@@ -239,7 +239,6 @@ static void print_entry_metadata(entry_t const *entry)
     }
 
     if (NME_SHOULD_PRINT_EXTENDED_ENTRY_METADATA == NME_FALSE) {
-
         printf("%s ", entry->name);
         return;
     }
@@ -347,6 +346,20 @@ static void traverse_archive(FILE *file)
     }
 
     free_queue(queue);
+}
+
+int process_archive(void)
+{
+    FILE *file = fopen(NME_INPUT_FILENAME, "rb");
+
+    if (file == NULL || ferror(file) != NME_FALSE) {
+        die("invalid or corrupt file");
+    }
+
+    traverse_archive(file);
+
+    fclose(file);
+    return EXIT_SUCCESS;
 }
 
 static void fix_path_separators(char *input)
@@ -494,5 +507,5 @@ int main(int count, char *arguments[])
         fail("no input files");
     }
 
-    return EXIT_SUCCESS;
+    return process_archive();
 }
