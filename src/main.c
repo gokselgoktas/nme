@@ -72,6 +72,14 @@ static void die(char const *message, ...)
     abort();
 }
 
+void handle_signal(int signal_identifier)
+{
+    (void) signal_identifier;
+
+    fprintf(stderr, "%s: aborting\n", NME_EXECUTABLE_NAME);
+    exit(EXIT_FAILURE);
+}
+
 static void fix_path_separators(char *input)
 {
     for (; input != NULL; input = strchr(input, NME_BACKSLASH)) {
@@ -96,5 +104,9 @@ static char const *extract_executable_name(char *filename)
 int main(int count, char *arguments[])
 {
     NME_EXECUTABLE_NAME = extract_executable_name(*arguments);
+
+    signal(SIGABRT, handle_signal);
+    signal(SIGINT, handle_signal);
+
     return EXIT_SUCCESS;
 }
