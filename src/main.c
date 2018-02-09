@@ -65,6 +65,9 @@ static int NME_SHOULD_PRINT_ENTRY_METADATA = NME_FALSE;
 static int NME_SHOULD_PRINT_EXTENDED_ENTRY_METADATA = NME_FALSE;
 static int NME_ENTRY_METADATA_PRINT_FILTER = -1;
 
+static int NME_SHOULD_EXTRACT_FILES = NME_FALSE;
+static char const *NME_OUTPUT_DIRECTORY = NULL;
+
 static void report(char const *message, ...)
 {
     if (message == NULL) {
@@ -274,6 +277,41 @@ static void enqueue_child_entries(FILE *file, queue_t *queue)
     }
 }
 
+static void extract_file_entry(FILE *file, entry_t const *entry)
+{
+    NME_ASSERT(file != NULL);
+    NME_ASSERT(entry != NULL && entry->type == NME_FILE);
+
+    if (entry->size == 0) {
+        return;
+    }
+
+    uint8_t *buffer = allocate(entry->size);
+    read(file, buffer, entry->size);
+
+    char *path = allocate(2048);
+    strcpy(path, entry->name);
+
+    if (NME_OUTPUT_DIRECTORY != NULL) {
+        size_t length = strlen(NME_OUTPUT_DIRECTORY);
+
+        strncpy(path, NME_OUTPUT_DIRECTORY, length);
+
+        if (path[length - 1] != NME_PATH_SEPARATOR) {
+            path[length] = NME_PATH_SEPARATOR;
+        }
+
+        strcat(path, entry->name);
+    }
+
+    FILE *output = fopen(path, "wb");
+    write(output, buffer, entry->size);
+    fclose(output);
+
+    free(path);
+    free(buffer);
+}
+
 static void traverse_archive(FILE *file)
 {
     NME_ASSERT(file != NULL);
@@ -289,6 +327,9 @@ static void traverse_archive(FILE *file)
 
         switch (entry->type) {
         case NME_FILE:
+            if (NME_SHOULD_EXTRACT_FILES == NME_TRUE) {
+                extract_file_entry(file, entry);
+            }
             break;
 
         case NME_DIRECTORY:
@@ -348,6 +389,7 @@ static void display_help_screen(void)
         "Options:\n"
         "        -h                  display this help screen\n"
         "        -v                  display version information\n"
+        "        -x [path=`.`]       extract files\n"
         "        -z [options=`fd+*`] print entry metadata\n"
         "\n",
         NME_EXECUTABLE_NAME);
@@ -369,6 +411,14 @@ static void handle_command_line_option(char option, char const *argument)
 
     case 'v':
         display_version_information();
+        break;
+
+    case 'x':
+        NME_SHOULD_EXTRACT_FILES = NME_TRUE;
+
+        if (argument != NULL) {
+            NME_OUTPUT_DIRECTORY = argument;
+        }
         break;
 
     case 'z':
