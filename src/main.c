@@ -160,6 +160,28 @@ static void write(FILE *file, void const *buffer, size_t size)
     }
 }
 
+static void dump(char const *filename, void const *buffer, size_t size)
+{
+    FILE *output = fopen(filename, "wb");
+    NME_ASSERT(output != NULL);
+
+    write(output, buffer, size);
+
+    fclose(output);
+}
+
+static void extract(char const *filename, FILE *file, size_t size)
+{
+    NME_ASSERT(filename != NULL || file != NULL);
+
+    uint8_t *buffer = allocate(size);
+
+    read(file, buffer, size);
+    dump(filename, buffer, size);
+
+    free(buffer);
+}
+
 static queue_t *create_queue(size_t capacity)
 {
     NME_ASSERT(capacity >= 1);
@@ -214,7 +236,7 @@ static int is_queue_empty(queue_t const *queue)
     return (queue->size == 0);
 }
 
-static entry_t *read_entry_metadata(FILE *file, entry_t *entry)
+static entry_t *read_entry(FILE *file, entry_t *entry)
 {
     if (file == NULL || ferror(file) != NME_FALSE) {
         die("invalid or corrupt file");
@@ -228,7 +250,7 @@ static entry_t *read_entry_metadata(FILE *file, entry_t *entry)
     return entry;
 }
 
-static void print_entry_metadata(entry_t const *entry)
+static void print_entry(entry_t const *entry)
 {
     NME_ASSERT(entry != NULL);
 
@@ -256,27 +278,7 @@ static void print_entry_metadata(entry_t const *entry)
         entry->offset);
 }
 
-static void enqueue_child_entries(FILE *file, queue_t *queue)
-{
-    NME_ASSERT(file != NULL);
-    NME_ASSERT(queue != NULL);
-
-    entry_t entry;
-    read_entry_metadata(file, &entry);
-
-    while (entry.type != NME_END_OF_DIRECTORY) {
-        if (ferror(file) != NME_FALSE) {
-            die("invalid or corrupt file");
-        } else if (feof(file) == NME_TRUE) {
-            die("premature end of file");
-        }
-
-        enqueue(queue, &entry);
-        read_entry_metadata(file, &entry);
-    }
-}
-
-static void extract_file_entry(FILE *file, entry_t const *entry)
+static void extract_entry(FILE *file, entry_t const *entry)
 {
     NME_ASSERT(file != NULL);
     NME_ASSERT(entry != NULL && entry->type == NME_FILE);
@@ -284,9 +286,6 @@ static void extract_file_entry(FILE *file, entry_t const *entry)
     if (entry->size == 0) {
         return;
     }
-
-    uint8_t *buffer = allocate(entry->size);
-    read(file, buffer, entry->size);
 
     char *path = allocate(2048);
     strcpy(path, entry->name);
@@ -304,49 +303,29 @@ static void extract_file_entry(FILE *file, entry_t const *entry)
         strcat(path, entry->name);
     }
 
-    FILE *output = fopen(path, "wb");
-    write(output, buffer, entry->size);
-    fclose(output);
+    extract(path, file, entry->size);
 
     free(path);
-    free(buffer);
 }
 
-static void traverse_archive(FILE *file)
+static void enqueue_entries(FILE *file, queue_t *queue)
 {
     NME_ASSERT(file != NULL);
+    NME_ASSERT(queue != NULL);
 
-    queue_t *queue = create_queue(NME_QUEUE_CAPACITY);
-    enqueue_child_entries(file, queue);
+    entry_t entry;
+    read_entry(file, &entry);
 
-    while (is_queue_empty(queue) == NME_FALSE) {
-        entry_t const *entry = dequeue(queue);
-        NME_ASSERT(entry != NULL);
-
-        fseek(file, entry->offset, SEEK_SET);
-
-        switch (entry->type) {
-        case NME_FILE:
-            if (NME_SHOULD_EXTRACT_FILES == NME_TRUE) {
-                extract_file_entry(file, entry);
-            }
-            break;
-
-        case NME_DIRECTORY:
-            enqueue_child_entries(file, queue);
-            break;
-
-        default:
-            die("corrupt entry");
-            break;
+    while (entry.type != NME_END_OF_DIRECTORY) {
+        if (ferror(file) != NME_FALSE) {
+            die("invalid or corrupt file");
+        } else if (feof(file) == NME_TRUE) {
+            die("premature end of file");
         }
 
-        if (NME_SHOULD_PRINT_ENTRY_METADATA == NME_TRUE) {
-            print_entry_metadata(entry);
-        }
+        enqueue(queue, &entry);
+        read_entry(file, &entry);
     }
-
-    free_queue(queue);
 }
 
 int process_archive(void)
@@ -357,7 +336,37 @@ int process_archive(void)
         die("invalid or corrupt file");
     }
 
-    traverse_archive(file);
+    queue_t *queue = create_queue(NME_QUEUE_CAPACITY);
+    enqueue_entries(file, queue);
+
+    while (is_queue_empty(queue) == NME_FALSE) {
+        entry_t const *entry = dequeue(queue);
+        NME_ASSERT(entry != NULL);
+
+        fseek(file, entry->offset, SEEK_SET);
+
+        switch (entry->type) {
+        case NME_FILE:
+            if (NME_SHOULD_EXTRACT_FILES == NME_TRUE) {
+                extract_entry(file, entry);
+            }
+            break;
+
+        case NME_DIRECTORY:
+            enqueue_entries(file, queue);
+            break;
+
+        default:
+            die("corrupt entry");
+            break;
+        }
+
+        if (NME_SHOULD_PRINT_ENTRY_METADATA == NME_TRUE) {
+            print_entry(entry);
+        }
+    }
+
+    free_queue(queue);
 
     fclose(file);
     return EXIT_SUCCESS;
@@ -370,7 +379,7 @@ static void fix_path_separators(char *input)
     }
 }
 
-static char const *extract_executable_name(char *filename)
+static char const *get_executable_name(char *filename)
 {
     char *executable_name = NULL;
 
@@ -497,7 +506,7 @@ static void parse_command_line(int count, char **arguments)
 
 int main(int count, char *arguments[])
 {
-    NME_EXECUTABLE_NAME = extract_executable_name(*arguments);
+    NME_EXECUTABLE_NAME = get_executable_name(*arguments);
 
     signal(SIGABRT, handle_signal);
     signal(SIGINT, handle_signal);
