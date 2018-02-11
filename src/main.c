@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include <string.h>
+#include <ctype.h>
 
 #include <signal.h>
 
@@ -22,6 +23,9 @@
 #define NME_DIRECTORY 1
 #define NME_END_OF_DIRECTORY -1
 
+#define NME_SILENT -1
+#define NME_VERBOSE 0
+
 #define NME_STRINGIFY(MACRO) #MACRO
 #define NME_EXPAND_AND_STRINGIFY(MACRO) NME_STRINGIFY(MACRO)
 
@@ -33,18 +37,8 @@
         } \
     } while (NME_FALSE)
 
-typedef struct entry entry_t;
 typedef struct queue queue_t;
-
-struct entry {
-    char name[32];
-    int8_t type;
-
-    uint8_t unused[3];
-
-    uint32_t size;
-    uint32_t offset;
-};
+typedef struct entry entry_t;
 
 struct queue {
     size_t head;
@@ -56,17 +50,24 @@ struct queue {
     entry_t *data;
 };
 
+struct entry {
+    char name[32];
+    int8_t type;
+
+    uint8_t unused[3];
+
+    uint32_t size;
+    uint32_t offset;
+};
+
+static size_t const NME_QUEUE_CAPACITY = 4096;
+
 static char const *NME_EXECUTABLE_NAME = NULL;
+
 static char const *NME_INPUT_FILENAME = NULL;
+static char const *NME_OUTPUT_PATH = NULL;
 
-static size_t NME_QUEUE_CAPACITY = 4096;
-
-static int NME_SHOULD_PRINT_ENTRY_METADATA = NME_FALSE;
-static int NME_SHOULD_PRINT_EXTENDED_ENTRY_METADATA = NME_FALSE;
-static int NME_ENTRY_METADATA_PRINT_FILTER = -1;
-
-static int NME_SHOULD_EXTRACT_FILES = NME_FALSE;
-static char const *NME_OUTPUT_DIRECTORY = NULL;
+static int NME_VERBOSITY = NME_SILENT;
 
 static void report(char const *message, ...)
 {
@@ -128,60 +129,6 @@ static void *allocate(size_t size)
     return result;
 }
 
-static void *read(FILE *file, void *buffer, size_t size)
-{
-    if (file == NULL || ferror(file) != NME_FALSE) {
-        die("invalid or corrupt file");
-    } else if (buffer == NULL) {
-        die("invalid or corrupt buffer");
-    }
-
-    size_t count = fread(buffer, size, 1, file);
-
-    if (count != 1) {
-        report("read(%lu) failed", size);
-    }
-
-    return buffer;
-}
-
-static void write(FILE *file, void const *buffer, size_t size)
-{
-    if (file == NULL || ferror(file) != 0) {
-        die("invalid or corrupt file");
-    } else if (buffer == NULL) {
-        die("invalid or corrupt buffer");
-    }
-
-    size_t count = fwrite(buffer, size, 1, file);
-
-    if (count != 1) {
-        report("write(0x%08x, %lu) failed", buffer, size);
-    }
-}
-
-static void dump(char const *filename, void const *buffer, size_t size)
-{
-    FILE *output = fopen(filename, "wb");
-    NME_ASSERT(output != NULL);
-
-    write(output, buffer, size);
-
-    fclose(output);
-}
-
-static void extract(char const *filename, FILE *file, size_t size)
-{
-    NME_ASSERT(filename != NULL || file != NULL);
-
-    uint8_t *buffer = allocate(size);
-
-    read(file, buffer, size);
-    dump(filename, buffer, size);
-
-    free(buffer);
-}
-
 static queue_t *create_queue(size_t capacity)
 {
     NME_ASSERT(capacity >= 1);
@@ -236,6 +183,60 @@ static int is_queue_empty(queue_t const *queue)
     return (queue->size == 0);
 }
 
+static void *read(FILE *file, void *buffer, size_t size)
+{
+    if (file == NULL || ferror(file) != NME_FALSE) {
+        die("invalid or corrupt file");
+    } else if (buffer == NULL) {
+        die("invalid or corrupt buffer");
+    }
+
+    size_t count = fread(buffer, size, 1, file);
+
+    if (count != 1) {
+        report("read(%lu) failed", size);
+    }
+
+    return buffer;
+}
+
+static void write(FILE *file, void const *buffer, size_t size)
+{
+    if (file == NULL || ferror(file) != 0) {
+        die("invalid or corrupt file");
+    } else if (buffer == NULL) {
+        die("invalid or corrupt buffer");
+    }
+
+    size_t count = fwrite(buffer, size, 1, file);
+
+    if (count != 1) {
+        report("write(0x%08x, %lu) failed", buffer, size);
+    }
+}
+
+static void dump(char const *filename, void const *buffer, size_t size)
+{
+    FILE *output = fopen(filename, "wb");
+    NME_ASSERT(output != NULL);
+
+    write(output, buffer, size);
+
+    fclose(output);
+}
+
+static void extract(char const *filename, FILE *file, size_t size)
+{
+    NME_ASSERT(filename != NULL || file != NULL);
+
+    uint8_t *buffer = allocate(size);
+
+    read(file, buffer, size);
+    dump(filename, buffer, size);
+
+    free(buffer);
+}
+
 static entry_t *read_entry(FILE *file, entry_t *entry)
 {
     if (file == NULL || ferror(file) != NME_FALSE) {
@@ -254,28 +255,11 @@ static void print_entry(entry_t const *entry)
 {
     NME_ASSERT(entry != NULL);
 
-    if (NME_ENTRY_METADATA_PRINT_FILTER > -1) {
-        if (entry->type != NME_ENTRY_METADATA_PRINT_FILTER) {
-            return;
-        }
-    }
-
-    if (NME_SHOULD_PRINT_EXTENDED_ENTRY_METADATA == NME_FALSE) {
-        printf("%s ", entry->name);
+    if (NME_VERBOSITY == NME_SILENT || entry->type == NME_END_OF_DIRECTORY) {
         return;
     }
 
-    char type_identifier = 'f';
-
-    if (entry->type == NME_DIRECTORY) {
-        type_identifier = 'd';
-    } else if (entry->type == NME_END_OF_DIRECTORY) {
-        printf("[!] %s\n", entry->name);
-        return;
-    }
-
-    printf("[%c] %s #%u $%u\n", type_identifier, entry->name, entry->size,
-        entry->offset);
+    printf("[%s %u %u] ", entry->name, entry->offset, entry->size);
 }
 
 static void extract_entry(FILE *file, entry_t const *entry)
@@ -283,26 +267,23 @@ static void extract_entry(FILE *file, entry_t const *entry)
     NME_ASSERT(file != NULL);
     NME_ASSERT(entry != NULL && entry->type == NME_FILE);
 
-    if (entry->size == 0) {
+    if (NME_OUTPUT_PATH == NULL || entry->size == 0) {
         return;
     }
 
     char *path = allocate(2048);
     strcpy(path, entry->name);
 
-    if (NME_OUTPUT_DIRECTORY != NULL) {
-        size_t length = strlen(NME_OUTPUT_DIRECTORY);
+    size_t length = strlen(NME_OUTPUT_PATH);
 
-        strncpy(path, NME_OUTPUT_DIRECTORY, length + 1);
+    strncpy(path, NME_OUTPUT_PATH, length + 1);
 
-        if (path[length - 1] != NME_PATH_SEPARATOR) {
-            char path_separator = NME_PATH_SEPARATOR;
-            strncat(path, &path_separator, 1);
-        }
-
-        strcat(path, entry->name);
+    if (path[length - 1] != NME_PATH_SEPARATOR) {
+        char path_separator = NME_PATH_SEPARATOR;
+        strncat(path, &path_separator, 1);
     }
 
+    strcat(path, entry->name);
     extract(path, file, entry->size);
 
     free(path);
@@ -347,9 +328,7 @@ int process_archive(void)
 
         switch (entry->type) {
         case NME_FILE:
-            if (NME_SHOULD_EXTRACT_FILES == NME_TRUE) {
-                extract_entry(file, entry);
-            }
+            extract_entry(file, entry);
             break;
 
         case NME_DIRECTORY:
@@ -361,7 +340,7 @@ int process_archive(void)
             break;
         }
 
-        if (NME_SHOULD_PRINT_ENTRY_METADATA == NME_TRUE) {
+        if (NME_VERBOSITY != NME_SILENT) {
             print_entry(entry);
         }
     }
@@ -410,10 +389,10 @@ static void display_help_screen(void)
         "        %s [options] file...\n"
         "\n"
         "Options:\n"
-        "        -h                  display this help screen\n"
-        "        -v                  display version information\n"
-        "        -x [path=`.`]       extract files\n"
-        "        -z [options=`fd+*`] print entry metadata\n"
+        "        -e [path=`.`] extract files\n"
+        "        -h            display this help screen\n"
+        "        -v            display version information\n"
+        "        -z            print entry metadata \n"
         "\n",
         NME_EXECUTABLE_NAME);
 }
@@ -428,6 +407,14 @@ static void display_version_information(void)
 static void handle_command_line_option(char option, char const *argument)
 {
     switch (option) {
+    case 'e':
+        NME_OUTPUT_PATH = ".";
+
+        if (argument != NULL) {
+            NME_OUTPUT_PATH = argument;
+        }
+        break;
+
     case 'h':
         display_help_screen();
         break;
@@ -436,42 +423,8 @@ static void handle_command_line_option(char option, char const *argument)
         display_version_information();
         break;
 
-    case 'x':
-        NME_SHOULD_EXTRACT_FILES = NME_TRUE;
-
-        if (argument != NULL) {
-            NME_OUTPUT_DIRECTORY = argument;
-        }
-        break;
-
     case 'z':
-        NME_SHOULD_PRINT_ENTRY_METADATA = NME_TRUE;
-
-        if (argument != NULL) {
-            char const *option = argument;
-
-            for (; option != argument + 2; ++option) {
-                switch (*option) {
-                case 'f':
-                    NME_ENTRY_METADATA_PRINT_FILTER = NME_FILE;
-                    break;
-
-                case 'd':
-                    NME_ENTRY_METADATA_PRINT_FILTER = NME_DIRECTORY;
-                    break;
-
-                case '+':
-                    NME_SHOULD_PRINT_EXTENDED_ENTRY_METADATA = NME_TRUE;
-                    break;
-
-                case '*':
-                    NME_ENTRY_METADATA_PRINT_FILTER = -1;
-
-                default:
-                    break;
-                }
-            }
-        }
+        NME_VERBOSITY = NME_VERBOSE;
         break;
 
     default:
