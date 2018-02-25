@@ -110,7 +110,7 @@ static void die(char const *message, ...)
     abort();
 }
 
-void handle_signal(int signal_identifier)
+static void handle_signal(int signal_identifier)
 {
     (void) signal_identifier;
 
@@ -309,7 +309,7 @@ static void enqueue_entries(FILE *file, queue_t *queue)
     }
 }
 
-int process_archive(void)
+static int process_archive(void)
 {
     FILE *file = fopen(NME_INPUT_FILENAME, "rb");
 
