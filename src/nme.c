@@ -351,22 +351,18 @@ int process_archive(void)
     return EXIT_SUCCESS;
 }
 
-static void fix_path_separators(char *input)
+static char const *get_executable_name(char *executable_path)
 {
-    for (; input != NULL; input = strchr(input, NME_BACKSLASH)) {
-        *input = NME_PATH_SEPARATOR;
+    NME_ASSERT(executable_path != NULL);
+
+    char *executable_name = strrchr(executable_path, '\\');
+
+    if (executable_name == NULL) {
+        executable_name = strrchr(executable_path, '/');
     }
-}
-
-static char const *get_executable_name(char *filename)
-{
-    char *executable_name = NULL;
-
-    fix_path_separators(filename);
-    executable_name = strrchr(filename, NME_PATH_SEPARATOR);
 
     if (executable_name == NULL || *(executable_name + 1) == '\0') {
-        return filename;
+        return executable_path;
     }
 
     return ++executable_name;
