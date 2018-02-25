@@ -215,6 +215,28 @@ static void write_into_file(FILE *file, void const *source, size_t size)
     }
 }
 
+static uint8_t *read_file_contents(char const *filename, size_t *size)
+{
+    NME_ASSERT(filename != NULL);
+    NME_ASSERT(size != NULL);
+
+    FILE *file = fopen(filename, "rb");
+
+    if (file == NULL || ferror(file) != 0) {
+        die("invalid or corrupt file");
+    }
+
+    fseek(file, 0, SEEK_END);
+    *size = (size_t) ftell(file);
+
+    void *contents = allocate(*size);
+    read_from_file(file, contents, *size);
+
+    fclose(file);
+
+    return contents;
+}
+
 static void dump_to_file(char const *filename, void const *contents,
     size_t size)
 {
