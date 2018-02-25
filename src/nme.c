@@ -183,44 +183,45 @@ static int is_queue_empty(queue_t const *queue)
     return (queue->size == 0);
 }
 
-static void *read(FILE *file, void *buffer, size_t size)
+static void *read_from_file(FILE *file, void *destination, size_t size)
 {
     if (file == NULL || ferror(file) != NME_FALSE) {
         die("invalid or corrupt file");
-    } else if (buffer == NULL) {
-        die("invalid or corrupt buffer");
+    } else if (destination == NULL) {
+        die("invalid or corrupt destination buffer");
     }
 
-    size_t count = fread(buffer, size, 1, file);
+    size_t count = fread(destination, size, 1, file);
 
     if (count != 1) {
-        report("read(%lu) failed", size);
+        report("read_from_file(%lu) failed", size);
     }
 
-    return buffer;
+    return destination;
 }
 
-static void write(FILE *file, void const *buffer, size_t size)
+static void write_into_file(FILE *file, void const *source, size_t size)
 {
     if (file == NULL || ferror(file) != 0) {
         die("invalid or corrupt file");
-    } else if (buffer == NULL) {
-        die("invalid or corrupt buffer");
+    } else if (source == NULL) {
+        die("invalid or corrupt source buffer");
     }
 
-    size_t count = fwrite(buffer, size, 1, file);
+    size_t count = fwrite(source, size, 1, file);
 
     if (count != 1) {
-        report("write(0x%08x, %lu) failed", buffer, size);
+        report("write_into_file(0x%08x, %lu) failed", source, size);
     }
 }
 
-static void dump(char const *filename, void const *buffer, size_t size)
+static void dump_to_file(char const *filename, void const *contents,
+    size_t size)
 {
     FILE *output = fopen(filename, "wb");
     NME_ASSERT(output != NULL);
 
-    write(output, buffer, size);
+    write_into_file(output, contents, size);
 
     fclose(output);
 }
@@ -231,8 +232,8 @@ static void extract(char const *filename, FILE *file, size_t size)
 
     uint8_t *buffer = allocate(size);
 
-    read(file, buffer, size);
-    dump(filename, buffer, size);
+    read_from_file(file, buffer, size);
+    dump_to_file(filename, buffer, size);
 
     free(buffer);
 }
@@ -245,7 +246,7 @@ static entry_t *read_entry(FILE *file, entry_t *entry)
         die("premature end of file");
     }
 
-    read(file, entry, sizeof (entry_t));
+    read_from_file(file, entry, sizeof (entry_t));
     entry->name[31] = '\0';
 
     return entry;
