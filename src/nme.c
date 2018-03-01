@@ -34,8 +34,18 @@
         } \
     } while (NME_FALSE)
 
+#define NME_PRAGMA(PRAGMA) _Pragma(NME_EXPAND_AND_STRINGIFY(PRAGMA))
+
+#define NME_PACK(ALIGNMENT) NME_PRAGMA(pack(ALIGNMENT))
+#define NME_DEFAULT_ALIGNMENT
+
 typedef struct queue queue_t;
 typedef struct entry entry_t;
+
+typedef struct wad wad_t;
+typedef struct palette palette_t;
+typedef struct line_offsets line_offsets_t;
+typedef struct image image_t;
 
 struct queue {
     size_t head;
@@ -55,6 +65,51 @@ struct entry {
 
     uint32_t size;
     uint32_t offset;
+};
+
+struct wad {
+    uint32_t number_of_palettes;
+    palette_t *palettes;
+
+    uint32_t number_of_images;
+    image_t *images;
+};
+
+NME_PACK(1)
+struct palette {
+    uint16_t colors[256];
+    char comment[13];
+};
+
+struct line_offsets {
+    uint32_t data_block_size;
+
+    uint8_t name[4];
+
+    uint32_t width;
+    uint32_t height;
+
+    uint32_t *values;
+};
+
+NME_PACK(1)
+struct image {
+    char name[32];
+
+    uint64_t pixel_data_size;
+    uint32_t unused[2];
+
+    uint32_t height;
+    uint32_t width;
+
+    uint16_t color_depth;
+
+    uint8_t *pixel_data;
+    line_offsets_t line_offsets;
+
+    uint32_t palette_id;
+
+    wad_t const *parent;
 };
 
 static size_t const NME_QUEUE_CAPACITY = 4096;
@@ -123,7 +178,25 @@ static void *allocate(size_t size)
         die("malloc(%lu) failed", size);
     }
 
-    return result;
+    return memset(result, 0x00, size);
+}
+
+static uint8_t get_red(uint16_t color)
+{
+    float red = (float) ((color >> 11) & 0x1F);
+    return (uint8_t) (8.225806f * red);
+}
+
+static uint8_t get_green(uint16_t color)
+{
+    float green = (float) ((color >> 5) & 0x3F);
+    return (uint8_t) (4.047619f * green);
+}
+
+static uint8_t get_blue(uint16_t color)
+{
+    float blue = (float) (color & 0x1F);
+    return (uint8_t) (8.225806f * blue);
 }
 
 static queue_t *create_queue(size_t capacity)
@@ -178,6 +251,22 @@ static int is_queue_empty(queue_t const *queue)
 {
     NME_ASSERT(queue != NULL);
     return (queue->size == 0);
+}
+
+static int has_extension(char const *filename, char const *extension)
+{
+    NME_ASSERT(filename != NULL);
+    NME_ASSERT(extension != NULL);
+
+    char *suffix = strrchr(filename, '.');
+
+    if (suffix != NULL) {
+        ++suffix;
+
+        return strnicmp(suffix, extension, 3) == 0;
+    }
+
+    return NME_FALSE;
 }
 
 static void *read_from_file(FILE *file, void *destination, size_t size)
@@ -245,7 +334,8 @@ static void dump_to_file(char const *filename, void const *contents,
     fclose(output);
 }
 
-static void extract(char const *filename, FILE *file, size_t size)
+static void extract_file_subsection(char const *filename, FILE *file,
+    size_t size)
 {
     NME_ASSERT(filename != NULL || file != NULL);
 
@@ -257,8 +347,178 @@ static void extract(char const *filename, FILE *file, size_t size)
     free(buffer);
 }
 
+static void free_image(image_t *image)
+{
+    free(image->line_offsets.values);
+    free(image->pixel_data);
+
+    free(image);
+}
+
+static image_t *read_image_information(FILE *file, image_t *image)
+{
+    NME_ASSERT(image != NULL);
+
+    if (file == NULL || ferror(file) != 0) {
+        die("invalid or corrupt file");
+    } else if (feof(file) == NME_TRUE) {
+        die("premature end of file");
+    }
+
+    size_t const non_header_data_size = sizeof (uint8_t *) +
+        sizeof (uint32_t) + sizeof (line_offsets_t) + sizeof (wad_t const *);
+
+    read_from_file(file, image, sizeof (image_t) - non_header_data_size);
+    image->name[31] = '\0';
+
+    fseek(file, 6, SEEK_CUR);
+
+    return image;
+}
+
+static image_t *read_image_pixel_data(FILE *file, image_t *image)
+{
+    NME_ASSERT(image != NULL);
+
+    if (file == NULL || ferror(file) != 0) {
+        die("invalid or corrupt file");
+    } else if (feof(file) == NME_TRUE) {
+        die("premature end of file");
+    }
+
+    image->pixel_data = allocate(image->pixel_data_size);
+    read_from_file(file, image->pixel_data, image->pixel_data_size);
+
+    return image;
+}
+
+static image_t *read_image_line_offsets(FILE *file, image_t *image)
+{
+    NME_ASSERT(image != NULL);
+
+    if (file == NULL || ferror(file) != 0) {
+        die("invalid or corrupt file");
+    } else if (feof(file) == NME_TRUE) {
+        die("premature end of file");
+    }
+
+    size_t const non_header_data_size = sizeof (uint32_t *);
+
+    read_from_file(file, &image->line_offsets, sizeof (line_offsets_t) -
+        non_header_data_size);
+
+    if (image->height == 0) {
+        return image;
+    }
+
+    image->line_offsets.values = allocate(sizeof (uint32_t) * image->height);
+
+    read_from_file(file, image->line_offsets.values, sizeof (uint32_t) *
+        image->height);
+
+    return image;
+}
+
+static void extract_bmp_image(char const *path, image_t const *image)
+{
+    NME_ASSERT(path != NULL);
+    NME_ASSERT(image != NULL && image->parent != NULL);
+
+    /* TODO */
+}
+
+static void extract_rle_image(char const *path, image_t const *image)
+{
+    NME_ASSERT(path != NULL);
+    NME_ASSERT(image != NULL);
+
+    /* TODO */
+}
+
+static void print_image_information(image_t const *image)
+{
+    NME_ASSERT(image != NULL);
+
+    if (NME_VERBOSITY == NME_SILENT) {
+        return;
+    }
+
+    printf("{$ %s # %llu w %u h %u @ %u ~ %u} ", image->name,
+        image->pixel_data_size, image->width, image->height,
+        image->color_depth, image->palette_id);
+}
+
+static void process_wad_archive(char const *path, FILE *file)
+{
+    if (file == NULL || ferror(file) != 0) {
+        die("invalid or corrupt file");
+    } else if (feof(file) == NME_TRUE) {
+        die("premature end of file");
+    }
+
+    fseek(file, 400, SEEK_CUR);
+
+    wad_t *wad = allocate(sizeof (wad_t));
+
+    read_from_file(file, &wad->number_of_palettes, sizeof (uint32_t));
+
+    if (wad->number_of_palettes == 0) {
+        free(wad->palettes);
+        free(wad);
+
+        return;
+    }
+
+    wad->palettes = allocate(wad->number_of_palettes * sizeof (palette_t));
+    read_from_file(file, wad->palettes,
+        wad->number_of_palettes * sizeof (palette_t));
+
+    read_from_file(file, &wad->number_of_images, sizeof (uint32_t));
+
+    if (wad->number_of_images == 0) {
+        free(wad->palettes);
+        free(wad);
+
+        return;
+    }
+
+    for (uint32_t i = 0; i < wad->number_of_images; ++i) {
+        image_t *image = allocate(sizeof (image_t));
+
+        image->parent = wad;
+
+        read_image_information(file, image);
+        read_image_pixel_data(file, image);
+
+        int is_rle = has_extension(image->name, "rle");
+
+        if (is_rle == NME_TRUE) {
+            read_image_line_offsets(file, image);
+        }
+
+        read_from_file(file, &image->palette_id, sizeof (uint32_t));
+
+        if (NME_VERBOSITY != NME_SILENT) {
+            print_image_information(image);
+        }
+
+        if (is_rle == NME_TRUE) {
+            extract_rle_image(path, image);
+        } else {
+            extract_bmp_image(path, image);
+        }
+
+        free_image(image);
+    }
+
+    free(wad->palettes);
+    free(wad);
+}
+
 static entry_t *read_entry_information(FILE *file, entry_t *entry)
 {
+    NME_ASSERT(entry != NULL);
+
     if (file == NULL || ferror(file) != 0) {
         die("invalid or corrupt file");
     } else if (feof(file) == NME_TRUE) {
@@ -293,7 +553,12 @@ static void extract_entry_contents(FILE *file, entry_t const *entry)
     }
 
     strcat(path, entry->name);
-    extract(path, file, entry->size);
+
+    if (has_extension(entry->name, "wad") == NME_TRUE) {
+        process_wad_archive(path, file);
+    } else {
+        extract_file_subsection(path, file, entry->size);
+    }
 
     free(path);
 }
@@ -408,7 +673,7 @@ static void display_help_screen(void)
         "        -e [path=`.`] extract files\n"
         "        -h            display this help screen\n"
         "        -v            display version information\n"
-        "        -z            print entry metadata \n"
+        "        -z            print entry information\n"
         "\n",
         NME_EXECUTABLE_NAME);
 }
