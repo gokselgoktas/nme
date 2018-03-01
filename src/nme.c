@@ -121,7 +121,10 @@ static size_t const NME_QUEUE_CAPACITY = 4096;
 
 static char const *NME_EXECUTABLE_NAME = NULL;
 
+static FILE *NME_INPUT_FILE = NULL;
 static char const *NME_INPUT_FILENAME = NULL;
+
+static FILE *NME_OUTPUT_FILE = NULL;
 static char const *NME_OUTPUT_PATH = NULL;
 
 static int NME_VERBOSITY = NME_SILENT;
@@ -266,23 +269,31 @@ static int has_extension(char const *filename, char const *extension)
     char *suffix = strrchr(filename, '.');
 
     if (suffix != NULL) {
-        ++suffix;
-
-        return strnicmp(suffix, extension, 3) == 0;
+        return strnicmp(++suffix, extension, 3) == 0;
     }
 
     return NME_FALSE;
 }
 
-static void *read_from_file(FILE *file, void *destination, size_t size)
+static void check_file_health(FILE *file)
 {
+    NME_ASSERT(file != NULL);
+
     if (file == NULL || ferror(file) != 0) {
         die("invalid or corrupt file");
-    } else if (destination == NULL) {
+    } else if (feof(file) == NME_TRUE) {
+        die("premature end of file");
+    }
+}
+
+static void *read_from_file(void *destination, size_t size)
+{
+    if (destination == NULL) {
         die("invalid or corrupt destination buffer");
     }
 
-    size_t count = fread(destination, size, 1, file);
+    check_file_health(NME_INPUT_FILE);
+    size_t count = fread(destination, size, 1, NME_INPUT_FILE);
 
     if (count != 1) {
         report("read_from_file(%lu) failed", size);
@@ -291,15 +302,14 @@ static void *read_from_file(FILE *file, void *destination, size_t size)
     return destination;
 }
 
-static void write_into_file(FILE *file, void const *source, size_t size)
+static void write_into_file(void const *source, size_t size)
 {
-    if (file == NULL || ferror(file) != 0) {
-        die("invalid or corrupt file");
-    } else if (source == NULL) {
+    if (source == NULL) {
         die("invalid or corrupt source buffer");
     }
 
-    size_t count = fwrite(source, size, 1, file);
+    check_file_health(NME_OUTPUT_FILE);
+    size_t count = fwrite(source, size, 1, NME_OUTPUT_FILE);
 
     if (count != 1) {
         report("write_into_file(0x%08x, %lu) failed", source, size);
@@ -312,16 +322,13 @@ static uint8_t *read_file_contents(char const *filename, size_t *size)
     NME_ASSERT(size != NULL);
 
     FILE *file = fopen(filename, "rb");
-
-    if (file == NULL || ferror(file) != 0) {
-        die("invalid or corrupt file");
-    }
+    check_file_health(file);
 
     fseek(file, 0, SEEK_END);
     *size = (size_t) ftell(file);
 
     void *contents = allocate(*size);
-    read_from_file(file, contents, *size);
+    read_from_file(contents, *size);
 
     fclose(file);
 
@@ -331,22 +338,21 @@ static uint8_t *read_file_contents(char const *filename, size_t *size)
 static void dump_to_file(char const *filename, void const *contents,
     size_t size)
 {
-    FILE *output = fopen(filename, "wb");
-    NME_ASSERT(output != NULL);
+    NME_ASSERT(filename != NULL);
 
-    write_into_file(output, contents, size);
+    NME_OUTPUT_FILE = fopen(filename, "wb");
 
-    fclose(output);
+    check_file_health(NME_OUTPUT_FILE);
+    write_into_file(contents, size);
+
+    fclose(NME_OUTPUT_FILE);
 }
 
-static void extract_file_subsection(char const *filename, FILE *file,
-    size_t size)
+static void extract_file_subsection(char const *filename, size_t size)
 {
-    NME_ASSERT(filename != NULL || file != NULL);
-
     uint8_t *buffer = allocate(size);
 
-    read_from_file(file, buffer, size);
+    read_from_file(buffer, size);
     dump_to_file(filename, buffer, size);
 
     free(buffer);
@@ -360,56 +366,38 @@ static void free_image(image_t *image)
     free(image);
 }
 
-static image_t *read_image_information(FILE *file, image_t *image)
+static image_t *read_image_information(image_t *image)
 {
     NME_ASSERT(image != NULL);
-
-    if (file == NULL || ferror(file) != 0) {
-        die("invalid or corrupt file");
-    } else if (feof(file) == NME_TRUE) {
-        die("premature end of file");
-    }
 
     size_t const non_header_data_size = sizeof (uint8_t *) +
         sizeof (uint32_t) + sizeof (line_offsets_t) + sizeof (wad_t const *);
 
-    read_from_file(file, image, sizeof (image_t) - non_header_data_size);
+    read_from_file(image, sizeof (image_t) - non_header_data_size);
     image->name[31] = '\0';
 
-    fseek(file, 6, SEEK_CUR);
+    fseek(NME_INPUT_FILE, 6, SEEK_CUR);
 
     return image;
 }
 
-static image_t *read_image_pixel_data(FILE *file, image_t *image)
+static image_t *read_image_pixel_data(image_t *image)
 {
     NME_ASSERT(image != NULL);
-
-    if (file == NULL || ferror(file) != 0) {
-        die("invalid or corrupt file");
-    } else if (feof(file) == NME_TRUE) {
-        die("premature end of file");
-    }
 
     image->pixel_data = allocate(image->pixel_data_size);
-    read_from_file(file, image->pixel_data, image->pixel_data_size);
+    read_from_file(image->pixel_data, image->pixel_data_size);
 
     return image;
 }
 
-static image_t *read_image_line_offsets(FILE *file, image_t *image)
+static image_t *read_image_line_offsets(image_t *image)
 {
     NME_ASSERT(image != NULL);
-
-    if (file == NULL || ferror(file) != 0) {
-        die("invalid or corrupt file");
-    } else if (feof(file) == NME_TRUE) {
-        die("premature end of file");
-    }
 
     size_t const non_header_data_size = sizeof (uint32_t *);
 
-    read_from_file(file, &image->line_offsets, sizeof (line_offsets_t) -
+    read_from_file(&image->line_offsets, sizeof (line_offsets_t) -
         non_header_data_size);
 
     if (image->height == 0) {
@@ -418,7 +406,7 @@ static image_t *read_image_line_offsets(FILE *file, image_t *image)
 
     image->line_offsets.values = allocate(sizeof (uint32_t) * image->height);
 
-    read_from_file(file, image->line_offsets.values, sizeof (uint32_t) *
+    read_from_file(image->line_offsets.values, sizeof (uint32_t) *
         image->height);
 
     return image;
@@ -453,19 +441,14 @@ static void print_image_information(image_t const *image)
         image->color_depth, image->palette_id);
 }
 
-static void process_wad_archive(char const *path, FILE *file, wad_t *wad)
+static void process_wad_archive(char const *path, wad_t *wad)
 {
     NME_ASSERT(wad != NULL);
 
-    if (file == NULL || ferror(file) != 0) {
-        die("invalid or corrupt file");
-    } else if (feof(file) == NME_TRUE) {
-        die("premature end of file");
-    }
+    check_file_health(NME_INPUT_FILE);
+    fseek(NME_INPUT_FILE, 400, SEEK_CUR);
 
-    fseek(file, 400, SEEK_CUR);
-
-    read_from_file(file, &wad->number_of_palettes, sizeof (uint32_t));
+    read_from_file(&wad->number_of_palettes, sizeof (uint32_t));
 
     if (wad->number_of_palettes == 0) {
         free(wad->palettes);
@@ -473,10 +456,10 @@ static void process_wad_archive(char const *path, FILE *file, wad_t *wad)
     }
 
     wad->palettes = allocate(wad->number_of_palettes * sizeof (palette_t));
-    read_from_file(file, wad->palettes,
+    read_from_file(wad->palettes,
         wad->number_of_palettes * sizeof (palette_t));
 
-    read_from_file(file, &wad->number_of_images, sizeof (uint32_t));
+    read_from_file(&wad->number_of_images, sizeof (uint32_t));
 
     if (wad->number_of_images == 0) {
         free(wad->palettes);
@@ -488,16 +471,16 @@ static void process_wad_archive(char const *path, FILE *file, wad_t *wad)
 
         image->parent = wad;
 
-        read_image_information(file, image);
-        read_image_pixel_data(file, image);
+        read_image_information(image);
+        read_image_pixel_data(image);
 
         int is_rle = has_extension(image->name, "rle");
 
         if (is_rle == NME_TRUE) {
-            read_image_line_offsets(file, image);
+            read_image_line_offsets(image);
         }
 
-        read_from_file(file, &image->palette_id, sizeof (uint32_t));
+        read_from_file(&image->palette_id, sizeof (uint32_t));
 
         if (NME_VERBOSITY != NME_SILENT) {
             print_image_information(image);
@@ -515,27 +498,21 @@ static void process_wad_archive(char const *path, FILE *file, wad_t *wad)
     free(wad->palettes);
 }
 
-static entry_t *read_entry_information(FILE *file, entry_t *entry)
+static entry_t *read_entry_information(entry_t *entry)
 {
     NME_ASSERT(entry != NULL);
 
-    if (file == NULL || ferror(file) != 0) {
-        die("invalid or corrupt file");
-    } else if (feof(file) == NME_TRUE) {
-        die("premature end of file");
-    }
-
     size_t const non_header_data_size = sizeof (entry_t const *);
 
-    read_from_file(file, entry, sizeof (entry_t) - non_header_data_size);
-    entry->name[31] = '\0';
+    check_file_health(NME_INPUT_FILE);
+    read_from_file(entry, sizeof (entry_t) - non_header_data_size);
 
+    entry->name[31] = '\0';
     return entry;
 }
 
-static void extract_entry_contents(FILE *file, entry_t const *entry)
+static void extract_entry_contents(entry_t const *entry)
 {
-    NME_ASSERT(file != NULL);
     NME_ASSERT(entry != NULL && entry->type == NME_FILE);
 
     if (NME_OUTPUT_PATH == NULL || entry->size == 0) {
@@ -560,11 +537,11 @@ static void extract_entry_contents(FILE *file, entry_t const *entry)
         wad_t *wad = allocate(sizeof (wad_t));
         wad->entry = entry;
 
-        process_wad_archive(path, file, wad);
+        process_wad_archive(path, wad);
 
         free(wad);
     } else {
-        extract_file_subsection(path, file, entry->size);
+        extract_file_subsection(path, entry->size);
     }
 
     free(path);
@@ -581,53 +558,44 @@ static void print_entry_information(entry_t const *entry)
     printf("[%s %u %u] ", entry->name, entry->offset, entry->size);
 }
 
-static void enqueue_entry_hierarchy(FILE *file, queue_t *queue,
-    entry_t const *parent)
+static void enqueue_entry_hierarchy(queue_t *queue, entry_t const *parent)
 {
-    NME_ASSERT(file != NULL);
     NME_ASSERT(queue != NULL);
 
-    entry_t entry;
-    read_entry_information(file, &entry);
-    entry.parent = parent;
+    entry_t *entry = allocate(sizeof (entry_t));
+    entry->parent = parent;
 
-    while (entry.type != NME_END_OF_DIRECTORY) {
-        if (ferror(file) != 0) {
-            die("invalid or corrupt file");
-        } else if (feof(file) == NME_TRUE) {
-            die("premature end of file");
-        }
+    read_entry_information(entry);
 
-        enqueue(queue, &entry);
-        read_entry_information(file, &entry);
-        entry.parent = parent;
+    while (entry->type != NME_END_OF_DIRECTORY) {
+        enqueue(queue, entry);
+        read_entry_information(entry);
     }
+
+    free(entry);
 }
 
 static int process_dir_archive(void)
 {
-    FILE *file = fopen(NME_INPUT_FILENAME, "rb");
-
-    if (file == NULL || ferror(file) != 0) {
-        die("invalid or corrupt file");
-    }
+    NME_INPUT_FILE = fopen(NME_INPUT_FILENAME, "rb");
+    check_file_health(NME_INPUT_FILE);
 
     queue_t *queue = create_queue(NME_QUEUE_CAPACITY);
-    enqueue_entry_hierarchy(file, queue, NULL);
+    enqueue_entry_hierarchy(queue, NULL);
 
     while (is_queue_empty(queue) == NME_FALSE) {
         entry_t const *entry = dequeue(queue);
         NME_ASSERT(entry != NULL);
 
-        fseek(file, entry->offset, SEEK_SET);
+        fseek(NME_INPUT_FILE, entry->offset, SEEK_SET);
 
         switch (entry->type) {
         case NME_FILE:
-            extract_entry_contents(file, entry);
+            extract_entry_contents(entry);
             break;
 
         case NME_DIRECTORY:
-            enqueue_entry_hierarchy(file, queue, entry);
+            enqueue_entry_hierarchy(queue, entry);
             break;
 
         default:
@@ -642,7 +610,7 @@ static int process_dir_archive(void)
 
     free_queue(queue);
 
-    fclose(file);
+    fclose(NME_INPUT_FILE);
     return EXIT_SUCCESS;
 }
 
