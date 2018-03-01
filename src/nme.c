@@ -8,7 +8,7 @@
 
 #include <signal.h>
 
-#define NME_VERSION_STRING "0.1"
+#define NME_VERSION_STRING "0.2"
 #define NME_BUILD_FEATURES "unpack:dump"
 
 #define NME_TRUE 1
