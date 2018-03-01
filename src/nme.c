@@ -57,6 +57,7 @@ struct queue {
     entry_t *data;
 };
 
+NME_PACK(1)
 struct entry {
     char name[32];
     int8_t type;
@@ -65,6 +66,8 @@ struct entry {
 
     uint32_t size;
     uint32_t offset;
+
+    entry_t const *parent;
 };
 
 struct wad {
@@ -522,7 +525,9 @@ static entry_t *read_entry_information(FILE *file, entry_t *entry)
         die("premature end of file");
     }
 
-    read_from_file(file, entry, sizeof (entry_t));
+    size_t const non_header_data_size = sizeof (entry_t const *);
+
+    read_from_file(file, entry, sizeof (entry_t) - non_header_data_size);
     entry->name[31] = '\0';
 
     return entry;
@@ -576,13 +581,15 @@ static void print_entry_information(entry_t const *entry)
     printf("[%s %u %u] ", entry->name, entry->offset, entry->size);
 }
 
-static void enqueue_entry_hierarchy(FILE *file, queue_t *queue)
+static void enqueue_entry_hierarchy(FILE *file, queue_t *queue,
+    entry_t const *parent)
 {
     NME_ASSERT(file != NULL);
     NME_ASSERT(queue != NULL);
 
     entry_t entry;
     read_entry_information(file, &entry);
+    entry.parent = parent;
 
     while (entry.type != NME_END_OF_DIRECTORY) {
         if (ferror(file) != 0) {
@@ -593,6 +600,7 @@ static void enqueue_entry_hierarchy(FILE *file, queue_t *queue)
 
         enqueue(queue, &entry);
         read_entry_information(file, &entry);
+        entry.parent = parent;
     }
 }
 
@@ -605,7 +613,7 @@ static int process_dir_archive(void)
     }
 
     queue_t *queue = create_queue(NME_QUEUE_CAPACITY);
-    enqueue_entry_hierarchy(file, queue);
+    enqueue_entry_hierarchy(file, queue, NULL);
 
     while (is_queue_empty(queue) == NME_FALSE) {
         entry_t const *entry = dequeue(queue);
@@ -619,7 +627,7 @@ static int process_dir_archive(void)
             break;
 
         case NME_DIRECTORY:
-            enqueue_entry_hierarchy(file, queue);
+            enqueue_entry_hierarchy(file, queue, entry);
             break;
 
         default:
