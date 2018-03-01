@@ -73,6 +73,8 @@ struct wad {
 
     uint32_t number_of_images;
     image_t *images;
+
+    entry_t const *entry;
 };
 
 NME_PACK(1)
@@ -448,8 +450,10 @@ static void print_image_information(image_t const *image)
         image->color_depth, image->palette_id);
 }
 
-static void process_wad_archive(char const *path, FILE *file)
+static void process_wad_archive(char const *path, FILE *file, wad_t *wad)
 {
+    NME_ASSERT(wad != NULL);
+
     if (file == NULL || ferror(file) != 0) {
         die("invalid or corrupt file");
     } else if (feof(file) == NME_TRUE) {
@@ -458,14 +462,10 @@ static void process_wad_archive(char const *path, FILE *file)
 
     fseek(file, 400, SEEK_CUR);
 
-    wad_t *wad = allocate(sizeof (wad_t));
-
     read_from_file(file, &wad->number_of_palettes, sizeof (uint32_t));
 
     if (wad->number_of_palettes == 0) {
         free(wad->palettes);
-        free(wad);
-
         return;
     }
 
@@ -477,8 +477,6 @@ static void process_wad_archive(char const *path, FILE *file)
 
     if (wad->number_of_images == 0) {
         free(wad->palettes);
-        free(wad);
-
         return;
     }
 
@@ -512,7 +510,6 @@ static void process_wad_archive(char const *path, FILE *file)
     }
 
     free(wad->palettes);
-    free(wad);
 }
 
 static entry_t *read_entry_information(FILE *file, entry_t *entry)
@@ -555,7 +552,12 @@ static void extract_entry_contents(FILE *file, entry_t const *entry)
     strcat(path, entry->name);
 
     if (has_extension(entry->name, "wad") == NME_TRUE) {
-        process_wad_archive(path, file);
+        wad_t *wad = allocate(sizeof (wad_t));
+        wad->entry = entry;
+
+        process_wad_archive(path, file, wad);
+
+        free(wad);
     } else {
         extract_file_subsection(path, file, entry->size);
     }
