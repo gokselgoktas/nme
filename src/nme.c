@@ -129,6 +129,9 @@ static char const *NME_OUTPUT_PATH = NULL;
 
 static int NME_VERBOSITY = NME_SILENT;
 
+static size_t NME_MAXIMUM_HEAP_USAGE = 0;
+static size_t NME_CURRENT_HEAP_USAGE = 0;
+
 static void report(char const *message, ...)
 {
     if (message == NULL) {
@@ -180,13 +183,30 @@ static void handle_signal(int signal_identifier)
 
 static void *allocate(size_t size)
 {
-    void *result = malloc(size);
+    size_t *memory = malloc(size + sizeof (size_t));
 
-    if (result == NULL) {
+    if (memory == NULL) {
         die("malloc(%lu) failed", size);
     }
 
-    return memset(result, 0x00, size);
+    NME_MAXIMUM_HEAP_USAGE += size;
+    NME_CURRENT_HEAP_USAGE += size;
+
+    *(memory++) = size;
+
+    return memset(memory, 0x00, size);
+}
+
+static void release(void *memory)
+{
+    size_t *size = memory;
+
+    if (size == NULL) {
+        return;
+    }
+
+    NME_CURRENT_HEAP_USAGE -= *(--size);
+    free(size);
 }
 
 static uint8_t get_red(uint16_t color)
@@ -225,11 +245,11 @@ static queue_t *create_queue(size_t capacity)
 static void free_queue(queue_t *queue)
 {
     if (queue != NULL) {
-        free(queue->data);
+        release(queue->data);
     }
 
     memset(queue, 0x00, sizeof (queue_t));
-    free(queue);
+    release(queue);
 }
 
 static void enqueue(queue_t *queue, entry_t const *entry)
@@ -355,15 +375,15 @@ static void extract_file_subsection(char const *filename, size_t size)
     read_from_file(buffer, size);
     dump_to_file(filename, buffer, size);
 
-    free(buffer);
+    release(buffer);
 }
 
 static void free_image(image_t *image)
 {
-    free(image->line_offsets.values);
-    free(image->pixel_data);
+    release(image->line_offsets.values);
+    release(image->pixel_data);
 
-    free(image);
+    release(image);
 }
 
 static image_t *read_image_information(image_t *image)
@@ -451,7 +471,7 @@ static void process_wad_archive(char const *path, wad_t *wad)
     read_from_file(&wad->number_of_palettes, sizeof (uint32_t));
 
     if (wad->number_of_palettes == 0) {
-        free(wad->palettes);
+        release(wad->palettes);
         return;
     }
 
@@ -462,7 +482,7 @@ static void process_wad_archive(char const *path, wad_t *wad)
     read_from_file(&wad->number_of_images, sizeof (uint32_t));
 
     if (wad->number_of_images == 0) {
-        free(wad->palettes);
+        release(wad->palettes);
         return;
     }
 
@@ -495,7 +515,7 @@ static void process_wad_archive(char const *path, wad_t *wad)
         free_image(image);
     }
 
-    free(wad->palettes);
+    release(wad->palettes);
 }
 
 static entry_t *read_entry_information(entry_t *entry)
@@ -539,12 +559,12 @@ static void extract_entry_contents(entry_t const *entry)
 
         process_wad_archive(path, wad);
 
-        free(wad);
+        release(wad);
     } else {
         extract_file_subsection(path, entry->size);
     }
 
-    free(path);
+    release(path);
 }
 
 static void print_entry_information(entry_t const *entry)
@@ -572,7 +592,7 @@ static void enqueue_entry_hierarchy(queue_t *queue, entry_t const *parent)
         read_entry_information(entry);
     }
 
-    free(entry);
+    release(entry);
 }
 
 static int process_dir_archive(void)
@@ -611,6 +631,15 @@ static int process_dir_archive(void)
     free_queue(queue);
 
     fclose(NME_INPUT_FILE);
+
+    if (NME_VERBOSITY != NME_SILENT) {
+        report("used %u bytes of heap memory", NME_MAXIMUM_HEAP_USAGE);
+
+        if (NME_CURRENT_HEAP_USAGE != 0) {
+            die("leaked %u bytes of heap memory", NME_CURRENT_HEAP_USAGE);
+        }
+    }
+
     return EXIT_SUCCESS;
 }
 
