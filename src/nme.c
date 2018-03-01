@@ -14,10 +14,7 @@
 #define NME_TRUE 1
 #define NME_FALSE 0
 
-#define NME_BACKSLASH '\\'
-#define NME_FORWARD_SLASH '/'
-
-#define NME_PATH_SEPARATOR NME_FORWARD_SLASH
+#define NME_PATH_SEPARATOR '/'
 
 #define NME_FILE 0
 #define NME_DIRECTORY 1
@@ -185,7 +182,7 @@ static int is_queue_empty(queue_t const *queue)
 
 static void *read_from_file(FILE *file, void *destination, size_t size)
 {
-    if (file == NULL || ferror(file) != NME_FALSE) {
+    if (file == NULL || ferror(file) != 0) {
         die("invalid or corrupt file");
     } else if (destination == NULL) {
         die("invalid or corrupt destination buffer");
@@ -260,9 +257,9 @@ static void extract(char const *filename, FILE *file, size_t size)
     free(buffer);
 }
 
-static entry_t *read_entry(FILE *file, entry_t *entry)
+static entry_t *read_entry_information(FILE *file, entry_t *entry)
 {
-    if (file == NULL || ferror(file) != NME_FALSE) {
+    if (file == NULL || ferror(file) != 0) {
         die("invalid or corrupt file");
     } else if (feof(file) == NME_TRUE) {
         die("premature end of file");
@@ -274,18 +271,7 @@ static entry_t *read_entry(FILE *file, entry_t *entry)
     return entry;
 }
 
-static void print_entry(entry_t const *entry)
-{
-    NME_ASSERT(entry != NULL);
-
-    if (NME_VERBOSITY == NME_SILENT || entry->type == NME_END_OF_DIRECTORY) {
-        return;
-    }
-
-    printf("[%s %u %u] ", entry->name, entry->offset, entry->size);
-}
-
-static void extract_entry(FILE *file, entry_t const *entry)
+static void extract_entry_contents(FILE *file, entry_t const *entry)
 {
     NME_ASSERT(file != NULL);
     NME_ASSERT(entry != NULL && entry->type == NME_FILE);
@@ -312,36 +298,47 @@ static void extract_entry(FILE *file, entry_t const *entry)
     free(path);
 }
 
-static void enqueue_entries(FILE *file, queue_t *queue)
+static void print_entry_information(entry_t const *entry)
+{
+    NME_ASSERT(entry != NULL);
+
+    if (NME_VERBOSITY == NME_SILENT || entry->type == NME_END_OF_DIRECTORY) {
+        return;
+    }
+
+    printf("[%s %u %u] ", entry->name, entry->offset, entry->size);
+}
+
+static void enqueue_entry_hierarchy(FILE *file, queue_t *queue)
 {
     NME_ASSERT(file != NULL);
     NME_ASSERT(queue != NULL);
 
     entry_t entry;
-    read_entry(file, &entry);
+    read_entry_information(file, &entry);
 
     while (entry.type != NME_END_OF_DIRECTORY) {
-        if (ferror(file) != NME_FALSE) {
+        if (ferror(file) != 0) {
             die("invalid or corrupt file");
         } else if (feof(file) == NME_TRUE) {
             die("premature end of file");
         }
 
         enqueue(queue, &entry);
-        read_entry(file, &entry);
+        read_entry_information(file, &entry);
     }
 }
 
-static int process_archive(void)
+static int process_dir_archive(void)
 {
     FILE *file = fopen(NME_INPUT_FILENAME, "rb");
 
-    if (file == NULL || ferror(file) != NME_FALSE) {
+    if (file == NULL || ferror(file) != 0) {
         die("invalid or corrupt file");
     }
 
     queue_t *queue = create_queue(NME_QUEUE_CAPACITY);
-    enqueue_entries(file, queue);
+    enqueue_entry_hierarchy(file, queue);
 
     while (is_queue_empty(queue) == NME_FALSE) {
         entry_t const *entry = dequeue(queue);
@@ -351,11 +348,11 @@ static int process_archive(void)
 
         switch (entry->type) {
         case NME_FILE:
-            extract_entry(file, entry);
+            extract_entry_contents(file, entry);
             break;
 
         case NME_DIRECTORY:
-            enqueue_entries(file, queue);
+            enqueue_entry_hierarchy(file, queue);
             break;
 
         default:
@@ -364,7 +361,7 @@ static int process_archive(void)
         }
 
         if (NME_VERBOSITY != NME_SILENT) {
-            print_entry(entry);
+            print_entry_information(entry);
         }
     }
 
@@ -489,5 +486,5 @@ int main(int count, char *arguments[])
         fail("no input files");
     }
 
-    return process_archive();
+    return process_dir_archive();
 }
