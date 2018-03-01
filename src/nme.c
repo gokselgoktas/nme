@@ -8,7 +8,10 @@
 
 #include <signal.h>
 
-#define NME_VERSION_STRING "0.2"
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
+#define NME_VERSION_STRING "0.3"
 #define NME_BUILD_FEATURES "unpack:dump"
 
 #define NME_TRUE 1
@@ -492,7 +495,39 @@ static void extract_bmp_image(image_t const *image)
 {
     NME_ASSERT(image != NULL && image->parent != NULL);
 
-    /* TODO */
+    wad_t const *parent = image->parent;
+
+    NME_ASSERT(parent->palettes != NULL);
+    NME_ASSERT(image->palette_id < parent->number_of_palettes);
+
+    uint8_t *pixel_data = allocate(image->width * image->height * 3);
+
+    for (uint32_t y = 0; y < image->height; ++y) {
+        for (uint32_t x = 0; x < image->width; ++x) {
+            size_t from = x + y * (image->width + 2);
+            size_t to = 3 * (x + y * image->width);
+
+            uint8_t index = image->pixel_data[from];
+
+            palette_t const *palette = &parent->palettes[image->palette_id];
+            uint16_t color = palette->colors[index];
+
+            pixel_data[to + 0] = get_red(color);
+            pixel_data[to + 1] = get_green(color);
+            pixel_data[to + 2] = get_blue(color);
+        }
+    }
+
+    char *path = get_path_for_image(image);
+    uint64_t salt = hash(path);
+
+    sprintf(path, "%s%c%llu-%s", NME_OUTPUT_PATH, NME_PATH_SEPARATOR, salt,
+        image->name);
+
+    stbi_write_bmp(path, image->width, image->height, 3, pixel_data);
+
+    release(path);
+    release(pixel_data);
 }
 
 static void extract_rle_image(image_t const *image)
