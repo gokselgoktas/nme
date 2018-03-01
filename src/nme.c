@@ -14,8 +14,6 @@
 #define NME_TRUE 1
 #define NME_FALSE 0
 
-#define NME_PATH_SEPARATOR '/'
-
 #define NME_FILE 0
 #define NME_DIRECTORY 1
 #define NME_END_OF_DIRECTORY -1
@@ -127,6 +125,8 @@ static char const *NME_INPUT_FILENAME = NULL;
 static FILE *NME_OUTPUT_FILE = NULL;
 static char const *NME_OUTPUT_PATH = NULL;
 
+static char const NME_PATH_SEPARATOR = '/';
+
 static int NME_VERBOSITY = NME_SILENT;
 
 static size_t NME_MAXIMUM_HEAP_USAGE = 0;
@@ -209,6 +209,14 @@ static void release(void *memory)
     free(size);
 }
 
+static char *prepend(char *string, char const *prefix, size_t length)
+{
+    NME_ASSERT(string != NULL && prefix != NULL);
+
+    memmove(string + length, string, strlen(string) + 1);
+    return strncpy(string, prefix, length);
+}
+
 static uint8_t get_red(uint16_t color)
 {
     float red = (float) ((color >> 11) & 0x1F);
@@ -289,10 +297,58 @@ static int has_extension(char const *filename, char const *extension)
     char *suffix = strrchr(filename, '.');
 
     if (suffix != NULL) {
-        return strnicmp(++suffix, extension, 3) == 0;
+        return strnicmp(++suffix, extension, strlen(extension)) == 0;
     }
 
     return NME_FALSE;
+}
+
+static char *get_path_for_entry(entry_t const *entry)
+{
+    char *path = allocate(4096);
+
+    if (NME_OUTPUT_PATH == NULL || entry == NULL) {
+        return path;
+    }
+
+    strcpy(path, entry->name);
+    entry = entry->parent;
+
+    for (; entry != NULL; entry = entry->parent) {
+        prepend(path, entry->name, strlen(entry->name));
+        prepend(path, &NME_PATH_SEPARATOR, 1);
+    }
+
+    return prepend(path, NME_OUTPUT_PATH, strlen(NME_OUTPUT_PATH));
+}
+
+static char *get_path_for_wad(wad_t const *wad)
+{
+    NME_ASSERT(wad != NULL);
+    return get_path_for_entry(wad->entry);
+}
+
+static char *get_path_for_image(image_t const *image)
+{
+    NME_ASSERT(image != NULL);
+
+    char *path = get_path_for_wad(image->parent);
+    strncat(path, &NME_PATH_SEPARATOR, 1);
+
+    return strcat(path, image->name);
+}
+
+static uint64_t hash(char const *string)
+{
+    NME_ASSERT(string != NULL);
+
+    uint64_t result = 5381;
+
+    for (; *string != '\0'; ++string) {
+        result = (result << 5) + result + *string;
+    }
+
+    return result;
 }
 
 static void check_file_health(FILE *file)
@@ -432,18 +488,16 @@ static image_t *read_image_line_offsets(image_t *image)
     return image;
 }
 
-static void extract_bmp_image(char const *path, image_t const *image)
+static void extract_bmp_image(image_t const *image)
 {
-    NME_ASSERT(path != NULL);
     NME_ASSERT(image != NULL && image->parent != NULL);
 
     /* TODO */
 }
 
-static void extract_rle_image(char const *path, image_t const *image)
+static void extract_rle_image(image_t const *image)
 {
-    NME_ASSERT(path != NULL);
-    NME_ASSERT(image != NULL);
+    NME_ASSERT(image != NULL && image->parent != NULL);
 
     /* TODO */
 }
@@ -461,7 +515,7 @@ static void print_image_information(image_t const *image)
         image->color_depth, image->palette_id);
 }
 
-static void process_wad_archive(char const *path, wad_t *wad)
+static void process_wad_archive(wad_t *wad)
 {
     NME_ASSERT(wad != NULL);
 
@@ -507,9 +561,9 @@ static void process_wad_archive(char const *path, wad_t *wad)
         }
 
         if (is_rle == NME_TRUE) {
-            extract_rle_image(path, image);
+            extract_rle_image(image);
         } else {
-            extract_bmp_image(path, image);
+            extract_bmp_image(image);
         }
 
         free_image(image);
@@ -539,32 +593,22 @@ static void extract_entry_contents(entry_t const *entry)
         return;
     }
 
-    char *path = allocate(2048);
-    strcpy(path, entry->name);
-
-    size_t length = strlen(NME_OUTPUT_PATH);
-
-    strncpy(path, NME_OUTPUT_PATH, length + 1);
-
-    if (path[length - 1] != NME_PATH_SEPARATOR) {
-        char path_separator = NME_PATH_SEPARATOR;
-        strncat(path, &path_separator, 1);
-    }
-
-    strcat(path, entry->name);
-
     if (has_extension(entry->name, "wad") == NME_TRUE) {
         wad_t *wad = allocate(sizeof (wad_t));
         wad->entry = entry;
 
-        process_wad_archive(path, wad);
-
+        process_wad_archive(wad);
         release(wad);
     } else {
-        extract_file_subsection(path, entry->size);
-    }
+        char *path = get_path_for_entry(entry);
+        uint64_t salt = hash(path);
 
-    release(path);
+        sprintf(path, "%s%c%llu-%s", NME_OUTPUT_PATH, NME_PATH_SEPARATOR, salt,
+            entry->name);
+
+        extract_file_subsection(path, entry->size);
+        release(path);
+    }
 }
 
 static void print_entry_information(entry_t const *entry)
