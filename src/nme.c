@@ -354,6 +354,29 @@ static uint64_t hash(char const *string)
     return result;
 }
 
+static void create_directory_for_file(char *path)
+{
+    char *command = allocate(4096);
+    char *last_path_separator = strrchr(path, '\\');
+
+    if (last_path_separator == NULL) {
+        last_path_separator = strrchr(path, '/');
+    }
+
+    if (last_path_separator != NULL) {
+        *last_path_separator = '\0';
+    }
+
+    snprintf(command, 4096, "mkdir \"%s\" > nul 2>&1", path);
+
+    if (last_path_separator != NULL) {
+        *last_path_separator = NME_PATH_SEPARATOR;
+    }
+
+    system(command);
+    release(command);
+}
+
 static void check_file_health(FILE *file)
 {
     NME_ASSERT(file != NULL);
@@ -519,10 +542,7 @@ static void extract_bmp_image(image_t const *image)
     }
 
     char *path = get_path_for_image(image);
-    uint64_t salt = hash(path);
-
-    sprintf(path, "%s%c%llu-%s", NME_OUTPUT_PATH, NME_PATH_SEPARATOR, salt,
-        image->name);
+    create_directory_for_file(path);
 
     stbi_write_bmp(path, image->width, image->height, 3, pixel_data);
 
@@ -636,10 +656,7 @@ static void extract_entry_contents(entry_t const *entry)
         release(wad);
     } else {
         char *path = get_path_for_entry(entry);
-        uint64_t salt = hash(path);
-
-        sprintf(path, "%s%c%llu-%s", NME_OUTPUT_PATH, NME_PATH_SEPARATOR, salt,
-            entry->name);
+        create_directory_for_file(path);
 
         extract_file_subsection(path, entry->size);
         release(path);
