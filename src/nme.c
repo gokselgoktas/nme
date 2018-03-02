@@ -530,10 +530,10 @@ static void extract_bmp_image(image_t const *image)
             size_t from = x + y * (image->width + 2);
             size_t to = 3 * (x + y * image->width);
 
-            uint8_t index = image->pixel_data[from];
+            uint8_t palette_entry = image->pixel_data[from];
 
             palette_t const *palette = &parent->palettes[image->palette_id];
-            uint16_t color = palette->colors[index];
+            uint16_t color = palette->colors[palette_entry];
 
             pixel_data[to + 0] = get_red(color);
             pixel_data[to + 1] = get_green(color);
@@ -553,8 +553,70 @@ static void extract_bmp_image(image_t const *image)
 static void extract_rle_image(image_t const *image)
 {
     NME_ASSERT(image != NULL && image->parent != NULL);
+    NME_ASSERT(image->pixel_data != NULL);
 
-    /* TODO */
+    wad_t const *parent = image->parent;
+
+    NME_ASSERT(parent->palettes != NULL);
+    NME_ASSERT(image->palette_id < parent->number_of_palettes);
+
+    uint8_t *pixel_data = allocate(image->width * image->height << 2);
+    size_t tracker = 0;
+
+    for (size_t index = 0; index < image->pixel_data_size; ++index) {
+        uint8_t count = image->pixel_data[index];
+
+        if (count == 0xFF) {
+            count = image->pixel_data[++index];
+
+            for (; count > 0; --count) {
+                pixel_data[(tracker << 2) + 0] = 255;
+                pixel_data[(tracker << 2) + 1] = 0;
+                pixel_data[(tracker << 2) + 2] = 255;
+                pixel_data[(tracker << 2) + 3] = 0;
+
+                ++tracker;
+            }
+        } else {
+            uint8_t alpha = 255;
+
+            if (count == 0xFE) {
+                count = image->pixel_data[++index];
+                alpha = 127;
+            }
+
+            for (; count > 0; --count) {
+                uint8_t palette_entry = image->pixel_data[++index];
+
+                palette_t const *palette =
+                    &parent->palettes[image->palette_id];
+
+                uint16_t color = palette->colors[palette_entry];
+
+                pixel_data[(tracker << 2) + 0] = get_red(color);
+                pixel_data[(tracker << 2) + 1] = get_green(color);
+                pixel_data[(tracker << 2) + 2] = get_blue(color);
+                pixel_data[(tracker << 2) + 3] = alpha;
+
+                ++tracker;
+            }
+        }
+    }
+
+    char *path = get_path_for_image(image);
+    create_directory_for_file(path);
+
+    char *extension = strrchr(path, '.');
+
+    if (extension != NULL) {
+        *extension = '\0';
+        strcat(path, ".png");
+    }
+
+    stbi_write_png(path, image->width, image->height, 4, pixel_data, 0);
+
+    release(path);
+    release(pixel_data);
 }
 
 static void print_image_information(image_t const *image)
