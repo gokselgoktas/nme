@@ -11,6 +11,11 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
+#if defined (__unix__) || (defined (__APPLE__) && defined (__MACH__))
+#include <strings.h>
+#define strnicmp strncasecmp
+#endif
+
 #define NME_VERSION_STRING "0.3"
 #define NME_BUILD_FEATURES "unpack:dump"
 
