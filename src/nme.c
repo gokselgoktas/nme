@@ -262,15 +262,15 @@ static void free_queue(queue_t *queue)
 {
     if (queue != NULL) {
         release(queue->data);
+        memset(queue, 0x00, sizeof (queue_t));
     }
 
-    memset(queue, 0x00, sizeof (queue_t));
     release(queue);
 }
 
 static void enqueue(queue_t *queue, entry_t const *entry)
 {
-    NME_ASSERT(queue != NULL || queue->data != NULL);
+    NME_ASSERT(queue != NULL && queue->data != NULL);
     NME_ASSERT(queue->size + 1 < queue->capacity);
 
     queue->tail = (queue->tail + 1) % queue->capacity;
@@ -281,7 +281,7 @@ static void enqueue(queue_t *queue, entry_t const *entry)
 
 static entry_t const *dequeue(queue_t *queue)
 {
-    NME_ASSERT(queue != NULL || queue->data != NULL);
+    NME_ASSERT(queue != NULL && queue->data != NULL);
 
     entry_t const *entry = queue->data + queue->head;
     queue->head = (queue->head + 1) % queue->capacity;
