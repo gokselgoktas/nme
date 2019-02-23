@@ -320,9 +320,9 @@ static char *get_path_for_entry(entry_t const *entry)
     }
 
     strcpy(path, entry->name);
-    entry = entry->parent;
+    prepend(path, &NME_PATH_SEPARATOR, 1);
 
-    for (; entry != NULL; entry = entry->parent) {
+    for (entry = entry->parent; entry != NULL; entry = entry->parent) {
         prepend(path, entry->name, strlen(entry->name));
         prepend(path, &NME_PATH_SEPARATOR, 1);
     }
