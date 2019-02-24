@@ -346,19 +346,6 @@ static char *get_path_for_image(image_t const *image)
     return strcat(path, image->name);
 }
 
-static uint64_t hash(char const *string)
-{
-    NME_ASSERT(string != NULL);
-
-    uint64_t result = 5381;
-
-    for (; *string != '\0'; ++string) {
-        result = (result << 5) + result + *string;
-    }
-
-    return result;
-}
-
 static void create_directory_for_file(char *path)
 {
     char *command = allocate(4096);
@@ -421,25 +408,6 @@ static void write_into_file(void const *source, size_t size)
     if (count != 1) {
         report("write_into_file(0x%08x, %lu) failed", source, size);
     }
-}
-
-static uint8_t *read_file_contents(char const *filename, size_t *size)
-{
-    NME_ASSERT(filename != NULL);
-    NME_ASSERT(size != NULL);
-
-    FILE *file = fopen(filename, "rb");
-    check_file_health(file);
-
-    fseek(file, 0, SEEK_END);
-    *size = (size_t) ftell(file);
-
-    void *contents = allocate(*size);
-    read_from_file(contents, *size);
-
-    fclose(file);
-
-    return contents;
 }
 
 static void dump_to_file(char const *filename, void const *contents,
